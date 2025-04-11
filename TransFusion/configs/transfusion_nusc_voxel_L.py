@@ -5,9 +5,9 @@ class_names = [
 ]
 voxel_size = [0.075, 0.075, 0.2]
 out_size_factor = 8
-evaluation = dict(interval=1)
+# evaluation = dict(interval=1)
 dataset_type = 'NuScenesDataset'
-data_root = 'data/nuscenes/'
+data_root = 'data/nuscenes-mini/'
 input_modality = dict(
     use_lidar=True,
     use_camera=False,
@@ -30,7 +30,7 @@ train_pipeline = [
     dict(
         type='ObjectSample',
         db_sampler=dict(
-            data_root=None,
+            data_root=data_root,
             info_path=data_root + 'nuscenes_dbinfos_train.pkl',
             rate=1.0,
             prepare=dict(
@@ -113,8 +113,8 @@ test_pipeline = [
         ])
 ]
 data = dict(
-    samples_per_gpu=2,
-    workers_per_gpu=6,
+    samples_per_gpu=1,
+    workers_per_gpu=4,
     train=dict(
         type='CBGSDataset',
         dataset=dict(
@@ -199,7 +199,7 @@ model = dict(
         dropout=0.1,
         bn_momentum=0.1,
         activation='relu',
-        common_heads=dict(center=(2, 2), height=(1, 2), dim=(3, 2), rot=(2, 2), vel=(2, 2)),
+        common_heads=dict(center=(2, 2), height=(1, 2), dim=(3, 2), rot=(2, 2), vel=(2,2)),
         bbox_coder=dict(
             type='TransFusionBBoxCoder',
             pc_range=point_cloud_range[:2],
@@ -265,4 +265,4 @@ work_dir = None
 load_from = None
 resume_from = None
 workflow = [('train', 1)]
-gpu_ids = range(0, 8)
+gpu_ids = range(1)
