@@ -4,14 +4,14 @@ This repository contains experimental work building on two prominent 3D object d
 
 ## 🔧 Repository Structure
 
-\`\`\`
-FusionRepo/
+```
+Thesis/
 ├── FCOS3D/           # Modified version of mmdetection3d (based on FCOS3D)
 ├── TransFusion/      # Modified version of TransFusion (camera-only and fusion variants)
 ├── experiments/      # Custom scripts, configs, and logs
 ├── README.md
 └── .gitignore
-\`\`\`
+```
 
 ## 🧪 Experimental Branches
 
