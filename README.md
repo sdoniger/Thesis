@@ -36,7 +36,7 @@ Thesis/
 
 ## 📊 Results
 
-*Coming soon.* Results will compare performance across sensor modalities, including:
+*Images.* Results compare performance across sensor modalities, including:
 - LiDAR-only
 - Camera-only
 - Sensor fusion
