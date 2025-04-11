@@ -1,0 +1,11 @@
+class_name,camera_token_count,lidar_token_count,fusion_token_count
+car,71,81,79
+truck,60,81,36
+trailer,0,74,0
+bus,6,67,1
+construction_vehicle,5,81,0
+bicycle,0,81,2
+motorcycle,2,81,8
+pedestrian,74,81,81
+traffic_cone,47,81,24
+barrier,36,71,11
