@@ -79,7 +79,6 @@ def crop_image_patch_v2(pos_proposals, pos_assigned_gt_inds, gt_masks):
     gt_masks_th = (
         torch.from_numpy(gt_masks).to(device).index_select(
             0, pos_assigned_gt_inds).to(dtype=rois.dtype))
-    # Use RoIAlign could apparently accelerate the training (~0.1s/iter)
     targets = (
         roi_align(gt_masks_th, rois, mask_size[::-1], 1.0, 0, True).squeeze(1))
     return targets
@@ -119,30 +118,16 @@ def create_groundtruth_database(dataset_class_name,
                                 bev_only=False,
                                 coors_range=None,
                                 with_mask=False):
-    """Given the raw data, generate the ground truth database.
+    """Given the raw data, generate the ground truth database with skip/resume logic.
 
-    Args:
-        dataset_class_name （str): Name of the input dataset.
-        data_path (str): Path of the data.
-        info_prefix (str): Prefix of the info file.
-        info_path (str): Path of the info file.
-            Default: None.
-        mask_anno_path (str): Path of the mask_anno.
-            Default: None.
-        used_classes (list[str]): Classes have been used.
-            Default: None.
-        database_save_path (str): Path to save database.
-            Default: None.
-        db_info_save_path (str): Path to save db_info.
-            Default: None.
-        relative_path (bool): Whether to use relative path.
-            Default: True.
-        with_mask (bool): Whether to use mask.
-            Default: False.
+    If db_info_save_path exists, we load it and keep its references.
+    If a .bin file is already on disk or in old references, we skip rewriting it.
     """
+
     print(f'Create GT Database of {dataset_class_name}')
     dataset_cfg = dict(
         type=dataset_class_name, data_root=data_path, ann_file=info_path)
+
     if dataset_class_name == 'KittiDataset':
         file_client_args = dict(backend='disk')
         dataset_cfg.update(
@@ -219,14 +204,30 @@ def create_groundtruth_database(dataset_class_name,
     if database_save_path is None:
         database_save_path = osp.join(data_path, f'{info_prefix}_gt_database')
     if db_info_save_path is None:
-        db_info_save_path = osp.join(data_path,
-                                     f'{info_prefix}_dbinfos_train.pkl')
+        db_info_save_path = osp.join(data_path, f'{info_prefix}_dbinfos_train.pkl')
+
     mmcv.mkdir_or_exist(database_save_path)
+
+    # NEW: Load existing .pkl references if it exists
     all_db_infos = dict()
+    existing_paths = set()
+
+    if osp.exists(db_info_save_path):
+        print(f"Found existing DB info pkl: {db_info_save_path}, loading it.")
+        with open(db_info_save_path, 'rb') as f:
+            existing_db_infos = pickle.load(f)
+        # Merge them into all_db_infos, and collect their .bin paths
+        for cat_name, cat_list in existing_db_infos.items():
+            all_db_infos.setdefault(cat_name, []).extend(cat_list)
+            for entry in cat_list:
+                existing_paths.add(entry['path'])  # e.g. 'nuscenes_gt_database/xxx.bin'
+    else:
+        print("No existing dbinfo pkl found, starting fresh.")
+
     if with_mask:
         coco = COCO(osp.join(data_path, mask_anno_path))
         imgIds = coco.getImgIds()
-        file2id = dict()
+        file2id = {}
         for i in imgIds:
             info = coco.loadImgs([i])[0]
             file2id.update({info['file_name']: i})
@@ -241,11 +242,14 @@ def create_groundtruth_database(dataset_class_name,
         points = example['points'].tensor.numpy()
         gt_boxes_3d = annos['gt_bboxes_3d'].tensor.numpy()
         names = annos['gt_names']
-        group_dict = dict()
+
+        group_dict = {}
+
         if 'group_ids' in annos:
             group_ids = annos['group_ids']
         else:
             group_ids = np.arange(gt_boxes_3d.shape[0], dtype=np.int64)
+
         difficulty = np.zeros(gt_boxes_3d.shape[0], dtype=np.int32)
         if 'difficulty' in annos:
             difficulty = annos['difficulty']
@@ -254,10 +258,9 @@ def create_groundtruth_database(dataset_class_name,
         point_indices = box_np_ops.points_in_rbbox(points, gt_boxes_3d)
 
         if with_mask:
-            # prepare masks
             gt_boxes = annos['gt_bboxes']
             img_path = osp.split(example['img_info']['filename'])[-1]
-            if img_path not in file2id.keys():
+            if img_path not in file2id:
                 print(f'skip image {img_path} for empty mask')
                 continue
             img_id = file2id[img_path]
@@ -265,22 +268,10 @@ def create_groundtruth_database(dataset_class_name,
             kins_raw_info = coco.loadAnns(kins_annIds)
             kins_ann_info = _parse_coco_ann_info(kins_raw_info)
             h, w = annos['img_shape'][:2]
-            gt_masks = [
-                _poly2mask(mask, h, w) for mask in kins_ann_info['masks']
-            ]
-            # get mask inds based on iou mapping
+            gt_masks = [_poly2mask(mask, h, w) for mask in kins_ann_info['masks']]
             bbox_iou = bbox_overlaps(kins_ann_info['bboxes'], gt_boxes)
             mask_inds = bbox_iou.argmax(axis=0)
             valid_inds = (bbox_iou.max(axis=0) > 0.5)
-
-            # mask the image
-            # use more precise crop when it is ready
-            # object_img_patches = np.ascontiguousarray(
-            #     np.stack(object_img_patches, axis=0).transpose(0, 3, 1, 2))
-            # crop image patches using roi_align
-            # object_img_patches = crop_image_patch_v2(
-            #     torch.Tensor(gt_boxes),
-            #     torch.Tensor(mask_inds).long(), object_img_patches)
             object_img_patches, object_masks = crop_image_patch(
                 gt_boxes, gt_masks, mask_inds, annos['img'])
 
@@ -289,23 +280,31 @@ def create_groundtruth_database(dataset_class_name,
             abs_filepath = osp.join(database_save_path, filename)
             rel_filepath = osp.join(f'{info_prefix}_gt_database', filename)
 
-            # save point clouds and image patches for each object
+            # NEW: If we've already got rel_filepath in existing dbinfos, skip
+            if rel_filepath in existing_paths:
+                continue
+
+            # If physically on disk, skip creating it again
+            if osp.exists(abs_filepath):
+                print(f"Skipping existing file: {abs_filepath}")
+                continue
+
             gt_points = points[point_indices[:, i]]
             gt_points[:, :3] -= gt_boxes_3d[i, :3]
 
             if with_mask:
-                if object_masks[i].sum() == 0 or not valid_inds[i]:
-                    # Skip object for empty or invalid mask
+                if (object_masks[i].sum() == 0) or (not valid_inds[i]):
                     continue
                 img_patch_path = abs_filepath + '.png'
                 mask_patch_path = abs_filepath + '.mask.png'
                 mmcv.imwrite(object_img_patches[i], img_patch_path)
                 mmcv.imwrite(object_masks[i], mask_patch_path)
 
-            with open(abs_filepath, 'w') as f:
+            # CHANGED: Use 'wb' for binary
+            with open(abs_filepath, 'wb') as f:
                 gt_points.tofile(f)
 
-            if (used_classes is None) or names[i] in used_classes:
+            if (used_classes is None) or (names[i] in used_classes):
                 db_info = {
                     'name': names[i],
                     'path': rel_filepath,
@@ -316,7 +315,6 @@ def create_groundtruth_database(dataset_class_name,
                     'difficulty': difficulty[i],
                 }
                 local_group_id = group_ids[i]
-                # if local_group_id >= 0:
                 if local_group_id not in group_dict:
                     group_dict[local_group_id] = group_counter
                     group_counter += 1
@@ -325,13 +323,14 @@ def create_groundtruth_database(dataset_class_name,
                     db_info['score'] = annos['score'][i]
                 if with_mask:
                     db_info.update({'box2d_camera': gt_boxes[i]})
-                if names[i] in all_db_infos:
-                    all_db_infos[names[i]].append(db_info)
-                else:
-                    all_db_infos[names[i]] = [db_info]
+
+                all_db_infos.setdefault(names[i], []).append(db_info)
+                existing_paths.add(rel_filepath)
 
     for k, v in all_db_infos.items():
         print(f'load {len(v)} {k} database infos')
 
+    print(f"Saving final merged db info to {db_info_save_path}")
     with open(db_info_save_path, 'wb') as f:
         pickle.dump(all_db_infos, f)
+s
