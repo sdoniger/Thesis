@@ -1,6 +1,6 @@
-# FusionRepo: Transformer-Based 3D Object Detection Research
+# Multimodal Sensor Fusion: Transformer-Based 3D Object Detection Research
 
-This repository contains experimental work building on two prominent 3D object detection frameworks: [TransFusion](https://github.com/XuyangBai/TransFusion) and [MMDetection3D](https://github.com/open-mmlab/mmdetection3d). The goal is to explore multimodal fusion and custom configurations for LiDAR-only, camera-only, and fusion-based object detection in autonomous driving scenarios.
+This repository contains experimental work building on two prominent 3D object detection frameworks: [TransFusion](https://github.com/XuyangBai/TransFusion) and [FCOS3D](https://github.com/open-mmlab/mmdetection3d). The goal is to explore multimodal fusion and custom configurations for LiDAR-only, camera-only, and fusion-based object detection in autonomous driving scenarios.
 
 ## 🔧 Repository Structure
 
